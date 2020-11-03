@@ -879,7 +879,7 @@ static int sun4i_tcon_init_regmap(struct device *dev,
 static struct sunxi_engine *
 sun4i_tcon_find_engine_traverse(struct sun4i_drv *drv,
 				struct device_node *node,
-				u32 port_id)
+				u32 port_id, bool skip_bonus_ep)
 {
 	struct device_node *port, *ep, *remote;
 	struct sunxi_engine *engine = ERR_PTR(-EINVAL);
@@ -910,6 +910,40 @@ sun4i_tcon_find_engine_traverse(struct sun4i_drv *drv,
 	if (!remote)
 		goto out_put_ep;
 
+
+	if (skip_bonus_ep)
+	{
+			struct device_node *remote_ep_node;
+			struct of_endpoint local_endpoint, remote_endpoint;
+
+			remote_ep_node = of_graph_get_remote_endpoint(ep);
+			if (!remote_ep_node) {
+				DRM_DEBUG_DRIVER("Couldn't get remote endpoint\n");
+				of_node_put(remote);
+			}
+
+			if (of_graph_parse_endpoint(ep, &local_endpoint)) {
+				DRM_DEBUG_DRIVER("Couldn't parse local endpoint\n");
+				of_node_put(remote);
+				of_node_put(remote_ep_node);
+			}
+
+			if (of_graph_parse_endpoint(remote_ep_node,
+						    &remote_endpoint)) {
+				DRM_DEBUG_DRIVER("Couldn't parse remote endpoint\n");
+				of_node_put(remote);
+				of_node_put(remote_ep_node);
+			}
+
+			if (local_endpoint.id != remote_endpoint.id) {
+				DRM_DEBUG_DRIVER("Skipping bonus mixer->TCON connection when searching engine\n");
+				of_node_put(remote);
+				of_node_put(remote_ep_node);
+			}
+
+			of_node_put(remote_ep_node);
+	}
+
 	/* does this node match any registered engines? */
 	list_for_each_entry(engine, &drv->engine_list, list)
 		if (remote == engine->node)
@@ -929,7 +963,7 @@ sun4i_tcon_find_engine_traverse(struct sun4i_drv *drv,
 		reg -= 1;
 
 	/* keep looking through upstream ports */
-	engine = sun4i_tcon_find_engine_traverse(drv, remote, reg);
+	engine = sun4i_tcon_find_engine_traverse(drv, remote, reg, skip_bonus_ep);
 
 out_put_remote:
 	of_node_put(remote);
@@ -1057,7 +1091,8 @@ static int sun4i_tcon_get_index(struct sun4i_drv *drv)
  * works.
  */
 static struct sunxi_engine *sun4i_tcon_find_engine(struct sun4i_drv *drv,
-						   struct device_node *node)
+						   struct device_node *node,
+						   bool skip_bonus_ep)
 {
 	struct device_node *port;
 	struct sunxi_engine *engine;
@@ -1099,7 +1134,7 @@ static struct sunxi_engine *sun4i_tcon_find_engine(struct sun4i_drv *drv,
 
 	/* Fallback to old method by traversing input endpoints */
 	of_node_put(port);
-	return sun4i_tcon_find_engine_traverse(drv, node, 0);
+	return sun4i_tcon_find_engine_traverse(drv, node, 0, skip_bonus_ep);
 }
 
 static int sun4i_tcon_bind(struct device *dev, struct device *master,
@@ -1114,20 +1149,26 @@ static int sun4i_tcon_bind(struct device *dev, struct device *master,
 	bool has_lvds_rst, has_lvds_alt, can_lvds;
 	int ret;
 
-	engine = sun4i_tcon_find_engine(drv, dev->of_node);
-	if (IS_ERR(engine)) {
-		dev_err(dev, "Couldn't find matching engine\n");
-		return -EPROBE_DEFER;
-	}
-
 	tcon = devm_kzalloc(dev, sizeof(*tcon), GFP_KERNEL);
 	if (!tcon)
 		return -ENOMEM;
 	dev_set_drvdata(dev, tcon);
 	tcon->drm = drm;
 	tcon->dev = dev;
-	tcon->id = engine->id;
 	tcon->quirks = of_device_get_match_data(dev);
+	
+	/*
+	 * As we keep the connection between DE2 mixer and TCON not swapped,
+	 * skip the bonus endpoints (which stand for swapped connection)
+	 * when finding the correspoing engine.
+	 */
+	engine = sun4i_tcon_find_engine(drv, dev->of_node,
+					tcon->quirks->swappable_input);
+	if (IS_ERR(engine)) {
+		dev_err(dev, "Couldn't find matching engine\n");
+		return -EPROBE_DEFER;
+	}
+	tcon->id = engine->id;
 
 	tcon->lcd_rst = devm_reset_control_get(dev, "lcd");
 	if (IS_ERR(tcon->lcd_rst)) {
@@ -1525,6 +1566,11 @@ static const struct sun4i_tcon_quirks sun8i_v3s_quirks = {
 	.dclk_min_div		= 1,
 };
 
+static const struct sun4i_tcon_quirks sun8i_h3_quirks = {
+	.has_channel_1		= true,
+	.swappable_input	= true,
+};
+
 static const struct sun4i_tcon_quirks sun9i_a80_tcon_lcd_quirks = {
 	.has_channel_0		= true,
 	.needs_edp_reset	= true,
@@ -1553,6 +1599,7 @@ const struct of_device_id sun4i_tcon_of_table[] = {
 	{ .compatible = "allwinner,sun8i-v3s-tcon", .data = &sun8i_v3s_quirks },
 	{ .compatible = "allwinner,sun9i-a80-tcon-lcd", .data = &sun9i_a80_tcon_lcd_quirks },
 	{ .compatible = "allwinner,sun9i-a80-tcon-tv", .data = &sun9i_a80_tcon_tv_quirks },
+	{ .compatible = "allwinner,sun8i-h3-tcon", .data = &sun8i_h3_quirks },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sun4i_tcon_of_table);

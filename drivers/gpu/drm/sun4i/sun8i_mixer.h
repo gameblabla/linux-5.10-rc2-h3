@@ -12,6 +12,11 @@
 
 #include "sunxi_engine.h"
 
+/* The DCSC sub-engine is used to do color space conversation */
+#define SUN8I_MIXER_DCSC_EN			0xb0000
+#define SUN8I_MIXER_DCSC_COEF_REG(x)		(0xb0010 + 0x4 * x)
+#define SUN8I_MIXER_DCSC_COEF_ALPHA		0xb0040
+
 #define SUN8I_MIXER_SIZE(w, h)			(((h) - 1) << 16 | ((w) - 1))
 #define SUN8I_MIXER_COORD(x, y)			((y) << 16 | (x))
 
@@ -130,7 +135,6 @@
 #define SUN8I_MIXER_PEAK_EN			0xa6000
 #define SUN8I_MIXER_ASE_EN			0xa8000
 #define SUN8I_MIXER_FCC_EN			0xaa000
-#define SUN8I_MIXER_DCSC_EN			0xb0000
 
 #define SUN50I_MIXER_FCE_EN			0x70000
 #define SUN50I_MIXER_PEAK_EN			0x70800

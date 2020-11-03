@@ -27,6 +27,15 @@
 #include "sun8i_vi_layer.h"
 #include "sunxi_engine.h"
 
+
+static const u32 sun8i_rgb2yuv_coef[12] = {
+	0x00000107, 0x00000204, 0x00000064, 0x00004200,
+	0x00001f68, 0x00001ed6, 0x000001c2, 0x00020200,
+	0x000001c2, 0x00001e87, 0x00001fb7, 0x00020200,
+};
+
+static const u32 sun8i_rgb2yuv_dcsc_alpha = 0x00020200;
+
 struct de2_fmt_info {
 	u32	drm_fmt;
 	u32	de2_fmt;
@@ -256,6 +265,31 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine)
 		     SUN8I_MIXER_GLOBAL_DBUFF_ENABLE);
 }
 
+static void sun8i_mixer_apply_color_correction(struct sunxi_engine *engine)
+{
+	int i;
+
+	DRM_DEBUG_DRIVER("Applying RGB to YUV color correction\n");
+
+	/* Set color correction */
+	regmap_write(engine->regs, SUN8I_MIXER_DCSC_EN, 1);
+
+	for (i = 0; i < 12; i++)
+		regmap_write(engine->regs, SUN8I_MIXER_DCSC_COEF_REG(i),
+			     sun8i_rgb2yuv_coef[i]);
+
+	regmap_write(engine->regs, SUN8I_MIXER_DCSC_COEF_ALPHA,
+		     sun8i_rgb2yuv_dcsc_alpha);
+}
+
+static void sun8i_mixer_disable_color_correction(struct sunxi_engine *engine)
+{
+	DRM_DEBUG_DRIVER("Disabling color correction\n");
+
+	/* Disable color correction */
+	regmap_write(engine->regs, SUN8I_MIXER_DCSC_EN, 0);
+}
+
 static struct drm_plane **sun8i_layers_init(struct drm_device *drm,
 					    struct sunxi_engine *engine)
 {
@@ -301,6 +335,8 @@ static struct drm_plane **sun8i_layers_init(struct drm_device *drm,
 static const struct sunxi_engine_ops sun8i_engine_ops = {
 	.commit		= sun8i_mixer_commit,
 	.layers_init	= sun8i_layers_init,
+	.apply_color_correction		= sun8i_mixer_apply_color_correction,
+	.disable_color_correction	= sun8i_mixer_disable_color_correction,
 };
 
 static const struct regmap_config sun8i_mixer_regmap_config = {
@@ -560,6 +596,15 @@ static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
 	.vi_num		= 1,
 };
 
+static const struct sun8i_mixer_cfg sun8i_h3_mixer1_cfg = {
+	.ccsc		= 0,
+	.mod_rate	= 432000000,
+	.scaler_mask	= 0xf,
+	.scanline_yuv	= 2048,
+	.vi_num = 1,
+	.ui_num = 1,
+};
+
 static const struct sun8i_mixer_cfg sun8i_r40_mixer0_cfg = {
 	.ccsc		= 0,
 	.mod_rate	= 297000000,
@@ -627,6 +672,10 @@ static const struct of_device_id sun8i_mixer_of_table[] = {
 	{
 		.compatible = "allwinner,sun8i-h3-de2-mixer-0",
 		.data = &sun8i_h3_mixer0_cfg,
+	},
+	{
+		.compatible = "allwinner,sun8i-h3-de2-mixer-1",
+		.data = &sun8i_h3_mixer1_cfg
 	},
 	{
 		.compatible = "allwinner,sun8i-r40-de2-mixer-0",
